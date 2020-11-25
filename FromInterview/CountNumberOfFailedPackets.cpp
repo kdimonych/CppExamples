@@ -11,7 +11,10 @@
 #include <sys/stat.h>
 
 #include <unordered_map>
+#include <vector>
 #include <algorithm>
+#include <thread>
+#include <future>
 
 using namespace std;
 
@@ -36,10 +39,88 @@ struct packet
   char data[184];
 };
 
-static constexpr auto sikippedPacets(const unsigned int& continuity_counter, unsigned int prevCc)
+template<typename Base, typename Exp>
+static constexpr size_t intPow(const Base& base = 0, const Exp& exp = 0)
 {
-    integral_constant<int, 16> maxN;
+    return (exp <= 0) ? 1 : base * intPow(base, exp - 1);
+}
+
+static constexpr inline auto sikippedPackets(const unsigned int& continuity_counter, unsigned int prevCc)
+{
+    integral_constant<int, intPow(2, 4)> maxN;
     return ((continuity_counter + maxN - 1) - prevCc) % maxN;
+}
+
+struct Counters{
+    unsigned int counter = 0; //error counter
+    int initial_continuity_counter = 0;
+    int continuity_counter = -1; // -1 means that the Counter is not tuched
+};
+
+static vector<Counters> pidCheckWorker(const packet* begin, const packet* end)
+{
+    integral_constant<size_t, intPow(2, 13)> maxPidCount;
+    vector<Counters> errors(maxPidCount);
+    
+    for(; begin != end; ++begin)
+    {
+        assert(begin->PID < maxPidCount);
+        
+        Counters& error_c = errors[begin->PID]; //lookup counter record for certain PID
+        
+        if(error_c.continuity_counter == -1)
+        {
+            error_c.continuity_counter = 0;
+            error_c.initial_continuity_counter = begin->continuity_counter;
+        }
+        else
+            error_c.counter += sikippedPackets(begin->continuity_counter, error_c.continuity_counter);
+        
+        
+        error_c.continuity_counter = begin->continuity_counter;
+    }
+    
+    return errors;
+}
+
+static void merge_results(vector<Counters>& first_part, const vector<Counters>& last_part)
+{
+    assert(first_part.size() == last_part.size());
+    
+    auto fpBegin = first_part.begin();
+    const auto fpEnd = first_part.end();
+    auto lpBegin = last_part.begin();
+    const auto lpEnd = last_part.end();
+    
+    for(;fpBegin != fpEnd && lpBegin != lpEnd; ++fpBegin, ++lpBegin)
+    {
+        if(fpBegin->continuity_counter != -1 && lpBegin->continuity_counter != -1)
+            fpBegin->counter += lpBegin->counter + sikippedPackets(lpBegin->continuity_counter, fpBegin->continuity_counter);
+    }
+}
+
+static vector<Counters> parallelPidCheck(const packet* begin, const packet* end, int cores = 1)
+{
+    --cores;
+    
+    integral_constant<size_t, 2 * intPow(2, 13)> packetsPerCore;
+    
+    const size_t size = distance(begin, end);
+    if(size <= packetsPerCore || cores < 1)
+        //The task is small enough or no free cores left.
+        return pidCheckWorker(begin, end);
+    else
+    {
+        //Unfortunately, the task is too big to compute on a single core.
+        //Devide task on two sub tusks
+        const packet* mid = begin + size/2;
+        auto res2 = async(parallelPidCheck, mid, end, cores); // share the last half of the task to another thread
+        auto result = parallelPidCheck(begin, mid, cores); // try to compute the first half of the task in current thread
+        
+        //merge results
+        merge_results(result, res2.get());
+        return result;
+    }
 }
 
 void PidCheck(char* buf, int len)
@@ -47,39 +128,21 @@ void PidCheck(char* buf, int len)
     // todo:
     // [ {.PID = 3, .cc = 15}, {.PID = 2, .cc = 9}, {.PID = 3, .cc = 1} ]
     // PID 3 has 1 skipped packet
-      
-    using PidT = unsigned int;
-    struct Counters{
-        int counter; //error counter
-        unsigned int continuity_counter; //last cc
-    };
-      
-    unordered_map<PidT, Counters> e_counters;
-    int packets = len / sizeof(packet);
-    packet* data = reinterpret_cast<packet*>(buf);
-    const packet* end = data + packets;
     
-    for(; data != end; ++data)
-    {
-        auto it = e_counters.find(data->PID);
-        if(it == e_counters.end())
-        {
-            int temp = data->PID;//perfect forwarding doesn't works with bit fields
-            e_counters.emplace(temp, Counters{0, data->continuity_counter});
-        }
-        else
-        {
-            it->second.counter += sikippedPacets(data->continuity_counter, it->second.continuity_counter);
-            it->second.continuity_counter = data->continuity_counter;
-        }
-    }
-      
+    size_t packets = len / sizeof(packet);
+    packet* begin = reinterpret_cast<packet*>(buf);
+    const packet* end = begin + packets;
+    const int hwConcurrency = thread::hardware_concurrency();
+    
+    auto result = parallelPidCheck(begin, end, hwConcurrency);
+    
     //printing results
-    for(const auto& item : e_counters)
+    for(auto it = result.begin(); it != result.end(); ++it)
     {
-        cout << "PID " << item.first << " has " << item.second.counter << " lossed packets" << endl;
+        const size_t pid = distance(result.begin(), it);
+        if(it->continuity_counter != -1 && it->counter > 0)
+            cout << "PID " << pid << " has " << it->counter << " lost packets" << endl;
     }
-  
 }
 
 //Fills raw buffer with packert data
