@@ -6,5 +6,6 @@ cmake_minimum_required(VERSION 3.0)
 
 PROJECT( CppExamples LANGUAGES CXX VERSION 1.0 )
 
-ADD_SUBDIRECTORY( templates )
+ADD_SUBDIRECTORY( TemplateExample )
+ADD_SUBDIRECTORY( FromInterview )
 

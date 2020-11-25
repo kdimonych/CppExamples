@@ -36,9 +36,10 @@ struct packet
   char data[184];
 };
 
-constexpr inline auto sikippedPac(const packet& pac, unsigned int prevCc)
+static constexpr auto sikippedPacets(const unsigned int& continuity_counter, unsigned int prevCc)
 {
-  return ((pac.continuity_counter + 15) - prevCc) % 16;
+    integral_constant<int, 16> maxN;
+    return ((continuity_counter + maxN - 1) - prevCc) % maxN;
 }
 
 void PidCheck(char* buf, int len)
@@ -48,10 +49,9 @@ void PidCheck(char* buf, int len)
     // PID 3 has 1 skipped packet
       
     using PidT = unsigned int;
-    using CcT = unsigned int;
     struct Counters{
         int counter; //error counter
-        unsigned int cc; //last cc
+        unsigned int continuity_counter; //last cc
     };
       
     unordered_map<PidT, Counters> e_counters;
@@ -69,8 +69,8 @@ void PidCheck(char* buf, int len)
         }
         else
         {
-            it->second.counter += sikippedPac(*data, it->second.cc);
-            it->second.cc = data->continuity_counter;
+            it->second.counter += sikippedPacets(data->continuity_counter, it->second.continuity_counter);
+            it->second.continuity_counter = data->continuity_counter;
         }
     }
       
