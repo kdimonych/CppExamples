@@ -162,8 +162,9 @@ void generateData(char* buf, size_t len){
     
     memset(data, 1, len);
     
+    const size_t testDataSize = sizeof(testDataTable)/sizeof(TestStruct);
     const packet* end = data + packets;
-    for(size_t i = 0; data != end; ++data, i = ++i % sizeof(testDataTable))
+    for(size_t i = 0; data != end; ++data, i = ++i % testDataSize)
     {
         //new (data) packet; //to ensure that all build-in initialisation are done. (The structure "package" can have a default constructor)
         
