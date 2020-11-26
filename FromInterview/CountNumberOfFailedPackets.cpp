@@ -18,13 +18,6 @@
 
 using namespace std;
 
-long _filelength(const char *f)
-{
-    struct stat st;
-    stat(f, &st);
-    return st.st_size;
-}
-
 struct packet
 {             
   unsigned int sync_byte                      :8;    
@@ -40,21 +33,21 @@ struct packet
 };
 
 template<typename Base, typename Exp>
-static constexpr size_t intPow(const Base& base = 0, const Exp& exp = 0)
+static constexpr inline size_t intPow(const Base& base = 0, const Exp& exp = 0)
 {
     return (exp <= 0) ? 1 : base * intPow(base, exp - 1);
 }
 
-static constexpr inline auto sikippedPackets(const unsigned int& continuity_counter, unsigned int prevCc)
+static constexpr inline unsigned int sikippedPackets(unsigned int continuity_counter, unsigned int prevCc)
 {
-    integral_constant<int, intPow(2, 4)> maxN;
+    integral_constant<unsigned int, intPow(2, 4)> maxN;
     return ((continuity_counter + maxN - 1) - prevCc) % maxN;
 }
 
 struct Counters{
     unsigned int counter = 0; //error counter
-    int initial_continuity_counter = 0;
-    int continuity_counter = -1; // -1 means that the Counter is not tuched
+    unsigned int initial_continuity_counter = 0;
+    unsigned int continuity_counter = -1; // -1 means that the Counter is not tuched
 };
 
 static vector<Counters> pidCheckWorker(const packet* begin, const packet* end)
@@ -76,7 +69,6 @@ static vector<Counters> pidCheckWorker(const packet* begin, const packet* end)
         else
             error_c.counter += sikippedPackets(begin->continuity_counter, error_c.continuity_counter);
         
-        
         error_c.continuity_counter = begin->continuity_counter;
     }
     
@@ -95,7 +87,10 @@ static void merge_results(vector<Counters>& first_part, const vector<Counters>& 
     for(;fpBegin != fpEnd && lpBegin != lpEnd; ++fpBegin, ++lpBegin)
     {
         if(fpBegin->continuity_counter != -1 && lpBegin->continuity_counter != -1)
-            fpBegin->counter += lpBegin->counter + sikippedPackets(lpBegin->continuity_counter, fpBegin->continuity_counter);
+        {
+            fpBegin->counter += lpBegin->counter + sikippedPackets(lpBegin->initial_continuity_counter, fpBegin->continuity_counter);
+            fpBegin->continuity_counter = lpBegin->continuity_counter; //It can be omitted to increase performance
+        }
     }
 }
 
@@ -104,7 +99,7 @@ static vector<Counters> parallelPidCheck(const packet* begin, const packet* end,
     //integral_constant<size_t, 2 * intPow(2, 13)> packetsPerCore;
     
     const size_t size = distance(begin, end);
-    if(size <= packetsPerCore || cores <= 1)
+    if(size <= packetsPerCore || cores == 1)
         //The task is small enough or no free cores left.
         return pidCheckWorker(begin, end);
     else
@@ -112,8 +107,9 @@ static vector<Counters> parallelPidCheck(const packet* begin, const packet* end,
         //Unfortunately, the task is too big to compute on a single core.
         //Devide task on two sub tusks
         const packet* mid = begin + size/2;
-        --cores;
-        auto res2 = async(std::launch::async, parallelPidCheck, mid, end, cores, packetsPerCore); // share the last half of the task to another thread
+        
+        auto res2 = async(std::launch::async, parallelPidCheck, mid, end, cores/2, packetsPerCore); // share the last half of the task to another thread
+        cores -= cores/2;
         auto result = parallelPidCheck(begin, mid, cores, packetsPerCore); // try to compute the first half of the task in current thread
         
         //merge results
@@ -179,10 +175,13 @@ void printDataPackets(char* buf, size_t len)
     packet* data = reinterpret_cast<packet*>(buf);
     
     const packet* end = data + packets;
-    for(int i = 0; data != end; ++data)
+    int maxLines = 10;
+    for(int i = 0; data != end && maxLines > 0; ++data, --maxLines)
     {
         cout << "PID: " << data->PID << "\t, cc: " <<  data->continuity_counter << endl;
     }
+    if(data != end)
+        cout << "..."<< endl;
 }
 
 int main(int argc, const char * argv[]) {
