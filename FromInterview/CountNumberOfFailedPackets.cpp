@@ -99,14 +99,12 @@ static void merge_results(vector<Counters>& first_part, const vector<Counters>& 
     }
 }
 
-static vector<Counters> parallelPidCheck(const packet* begin, const packet* end, int cores = 1)
+static vector<Counters> parallelPidCheck(const packet* begin, const packet* end, int cores = 1, int packetsPerCore = intPow(2, 13))
 {
-    --cores;
-    
-    integral_constant<size_t, 2 * intPow(2, 13)> packetsPerCore;
+    //integral_constant<size_t, 2 * intPow(2, 13)> packetsPerCore;
     
     const size_t size = distance(begin, end);
-    if(size <= packetsPerCore || cores < 1)
+    if(size <= packetsPerCore || cores <= 1)
         //The task is small enough or no free cores left.
         return pidCheckWorker(begin, end);
     else
@@ -114,8 +112,9 @@ static vector<Counters> parallelPidCheck(const packet* begin, const packet* end,
         //Unfortunately, the task is too big to compute on a single core.
         //Devide task on two sub tusks
         const packet* mid = begin + size/2;
-        auto res2 = async(parallelPidCheck, mid, end, cores); // share the last half of the task to another thread
-        auto result = parallelPidCheck(begin, mid, cores); // try to compute the first half of the task in current thread
+        --cores;
+        auto res2 = async(std::launch::async, parallelPidCheck, mid, end, cores, packetsPerCore); // share the last half of the task to another thread
+        auto result = parallelPidCheck(begin, mid, cores, packetsPerCore); // try to compute the first half of the task in current thread
         
         //merge results
         merge_results(result, res2.get());
