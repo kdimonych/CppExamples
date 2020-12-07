@@ -13,16 +13,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 # automatically.
 # file( GLOB RELATIVE EXAMPLE_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.cpp )
 file( GLOB EXAMPLE_SOURCES_FULL  *.cpp )
-file( RELATIVE_PATH EXAMPLE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR} ${EXAMPLE_SOURCES_FULL})
-message( STATUS "Start creating examples")
 
-foreach( examplefile IN ITEMS ${EXAMPLE_SOURCES} )
+foreach( examplefile IN ITEMS ${EXAMPLE_SOURCES_FULL} )
+	#Extract example soure name
+	file( RELATIVE_PATH EXAMPLE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR} ${examplefile})
+
     # I used a simple string replace, to cut off .cpp.
-    string( REPLACE ".cpp" "" example ${examplefile} )
-    message( STATUS "Create example: " ${example} " from " ${examplefile} )
-    add_executable( ${example} ${examplefile} )
-    #${example}
+    string( REPLACE ".cpp" "" example ${EXAMPLE_SOURCES} )
+    
+    add_executable( ${example} ${EXAMPLE_SOURCES} )
+
     # Make sure YourLib is linked to each app
     #target_link_libraries( ${example} YourLib )
+
+    message( STATUS "Create example: " ${example} " from " ${EXAMPLE_SOURCES} )
 endforeach()
 
